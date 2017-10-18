@@ -10,6 +10,8 @@ import (
 	"github.com/rcrowley/go-metrics"
 )
 
+var flushChan chan struct{}
+
 type reporter struct {
 	reg      metrics.Registry
 	interval time.Duration
@@ -28,6 +30,11 @@ func InfluxDB(r metrics.Registry, d time.Duration, url, database, username, pass
 	InfluxDBWithTags(r, d, url, database, username, password, nil)
 }
 
+//force flush existed data to influxdb, make sure no data loss when close
+func Flush() {
+	flushChan <- struct{}{}
+}
+
 // InfluxDBWithTags starts a InfluxDB reporter which will post the metrics from the given registry at each d interval with the specified tags
 func InfluxDBWithTags(r metrics.Registry, d time.Duration, url, database, username, password string, tags map[string]string) {
 	u, err := uurl.Parse(url)
@@ -35,6 +42,8 @@ func InfluxDBWithTags(r metrics.Registry, d time.Duration, url, database, userna
 		log.Printf("unable to parse InfluxDB url %s. err=%v", url, err)
 		return
 	}
+
+	flushChan = make(chan struct{})
 
 	rep := &reporter{
 		reg:      r,
@@ -81,6 +90,10 @@ func (r *reporter) run() {
 				if err = r.makeClient(); err != nil {
 					log.Printf("unable to make InfluxDB client. err=%v", err)
 				}
+			}
+		case <-flushChan:
+			if err := r.send(); err != nil {
+				log.Printf("unable to send metrics to InfluxDB. err=%v", err)
 			}
 		}
 	}
